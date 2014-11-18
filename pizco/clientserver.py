@@ -385,6 +385,9 @@ class ProxyAgent(Agent):
             raise ValueError(action)
 
     def on_future_completed(self, sender, topic, content, msgid):
+        if not content['msgid'] in self._futures:
+            # this future does not belong to this proxy, so skip the message
+            return
         fut = self._futures[content['msgid']]
         if content['exception']:
             fut.set_exception(content['exception'])

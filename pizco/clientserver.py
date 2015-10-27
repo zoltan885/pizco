@@ -22,7 +22,10 @@ from .util import Signal
 from .agent import Agent
 
 if sys.version_info < (3, 2):
-    import futures
+    try:
+        import futures
+    except ImportError:
+        from concurrent import futures
 else:
     from concurrent import futures
 

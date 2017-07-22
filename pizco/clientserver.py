@@ -184,6 +184,7 @@ class Server(Agent):
             if isinstance(ret, futures.Future):
                 ret.add_done_callback(lambda fut: self.publish('__future__',
                                                                {'msgid': msgid,
+                                                                'sender': sender,
                                                                 'result': fut.result() if not fut.exception() else None,
                                                                 'exception': fut.exception()}))
                 return PSMessage('future_register', msgid)
@@ -367,7 +368,15 @@ class ProxyAgent(Agent):
         elif ret_action == 'future_register':
             fut = futures.Future()
             fut.set_running_or_notify_cancel()
-            self._futures[ret_options] = fut
+            if ret_options in self._futures:
+                # for this future, the result was already received
+                if self._futures[ret_options]['exception']:
+                    fut.set_exception(self._futures[ret_options]['exception'])
+                else:
+                    fut.set_result(self._futures[ret_options]['result'])
+                del self._futures[ret_options]
+            else:
+                self._futures[ret_options] = fut
             return fut
         else:
             raise ValueError('Unknown {}'.format(ret_action))
@@ -388,14 +397,21 @@ class ProxyAgent(Agent):
             raise ValueError(action)
 
     def on_future_completed(self, sender, topic, content, msgid):
+        # make sure self was the sender
+        if content['sender'] != self.rep_endpoint:
+            # or else ignore this future result
+            return
         if not content['msgid'] in self._futures:
-            # this future does not belong to this proxy, so skip the message
+            # this future result belongs to a future that hasn't been
+            # received, cache it for now
+            self._futures[content['msgid']] = content
             return
         fut = self._futures[content['msgid']]
         if content['exception']:
             fut.set_exception(content['exception'])
         else:
             fut.set_result(content['result'])
+        del self._futures[content['msgid']]
 
     def on_notification(self, sender, topic, content, msgid):
         try:

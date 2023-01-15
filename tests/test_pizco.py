@@ -199,7 +199,7 @@ class AgentTest(unittest.TestCase):
     def test_agent_serve_in_process(self):
 
         address = 'tcp://127.0.0.1:9874'
-        proxy = Server.serve_in_process(Example, (), {}, address)
+        proxy = Server.serve_in_process(Example, (), {}, address, in_terminal=False)
 
         time.sleep(SLEEP_SECS * 10)
 

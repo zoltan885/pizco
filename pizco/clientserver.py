@@ -244,9 +244,9 @@ class Server(Agent):
     @classmethod
     def serve_in_process(cls, served_cls, args, kwargs,
                          rep_endpoint, pub_endpoint='tcp://127.0.0.1:0',
-                         verbose=False, gui=False):
+                         verbose=False, gui=False, in_terminal=True):
         cwd = os.path.dirname(inspect.getfile(served_cls))
-        launch(cwd, rep_endpoint, pub_endpoint, verbose, gui)
+        launch(cwd, rep_endpoint, pub_endpoint, verbose, gui, in_terminal)
         import time
         time.sleep(1)
         proxy = Proxy(rep_endpoint)

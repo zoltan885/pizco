@@ -16,7 +16,8 @@ import threading
 from collections import defaultdict
 
 import zmq
-from zmq.eventloop import zmqstream, ioloop
+from zmq.eventloop import zmqstream
+from tornado import ioloop
 
 from . import LOGGER
 from .protocol import Protocol
@@ -55,6 +56,8 @@ class AgentManager(object):
         try:
             while cls.threads[agent.loop].is_alive():
                 cls.threads[agent.loop].join(1)
+                if not agent._running:
+                    break
         except (KeyboardInterrupt, SystemExit):
             return
 

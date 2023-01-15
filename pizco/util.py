@@ -18,30 +18,54 @@ class SignalError(Exception):
 
 def specable(f):
     try:
-        inspect.getargspec(f)
+        inspect.getfullargspec(f)
         return True
     except:
         return False
 
 
 def getspec(f):
-    if specable(f):
-        spec = inspect.getargspec(f)
-        defaults = []
-        if spec.defaults is not None:
-            defaults = spec.defaults
-        return inspect.ArgSpec(
-            spec.args, spec.varargs is not None,
-            spec.keywords is not None, defaults)
-    if hasattr(f, '__call__') and specable(f.__call__):
-        spec = getspec(f.__call__)
-        args = spec.args[1:]  # remove reference to self
-        return inspect.ArgSpec(
-            args, spec.varargs, spec.keywords, spec.defaults)
-    # TODO handle partials
-    raise ValueError(
-        "getspec doesn't know how to get function spec from type {}".format(
-            type(f)))
+    if not specable(f):
+        raise ValueError(
+            "getspec doesn't know how to get function spec from type {}".format(
+                type(f)))
+    spec = inspect.getfullargspec(f)
+    defaults = []
+    if hasattr(f, '__call__') and inspect.ismethod(f.__call__):
+        return getspec(f.__call__)
+    if spec.defaults is not None:
+        defaults = spec.defaults
+    if inspect.ismethod(f):
+        # remove self from args
+        args = spec.args[1:]
+    else:
+        args = spec.args
+    return inspect.FullArgSpec(
+        args, spec.varargs, spec.varkw, defaults, spec.kwonlyargs, spec.kwonlydefaults, spec.annotations)
+
+    # if hasattr(f, '__call__') and specable(f.__call__):
+    #     #spec = getspec(f.__call__)
+    #     spec = inspect.getfullargspec(f)
+    #     defaults = []
+    #     if spec.defaults is not None:
+    #         defaults = spec.defaults
+    #     args = spec.args[1:]  # remove reference to self
+    #     return inspect.FullArgSpec(args, spec.varargs, spec.varkw, defaults, spec.kwonlyargs, spec.kwonlydefaults, spec.annotations)
+    #     #return inspect.FullArgSpec(
+    #     #    args, spec.varargs, spec.varargs, spec.defaults)
+    # if specable(f):
+    #     spec = inspect.getfullargspec(f)
+    #     defaults = []
+    #     if spec.defaults is not None:
+    #         defaults = spec.defaults
+    #     return inspect.FullArgSpec(spec.args, spec.varargs, spec.varkw, defaults, spec.kwonlyargs, spec.kwonlydefaults, spec.annotations)
+    #     #return inspect.FullArgSpec(
+    #     #    spec.args, spec.varargs is not None,
+    #     #    spec.varargs is not None, defaults)
+    # # TODO handle partials
+    # raise ValueError(
+    #     "getspec doesn't know how to get function spec from type {}".format(
+    #         type(f)))
 
 
 class Signal(object):
@@ -81,7 +105,7 @@ class Signal(object):
                         "Slot {} expects too many args {}".format(
                             slot, minargs))
 
-        if not spec.keywords:  # function only accepts specific kwargs
+        if not spec.varkw:  # function only accepts specific kwargs
             if self._varkwargs:
                 raise SignalError(
                     "Slot {} does not accept varkwargs".format(slot))

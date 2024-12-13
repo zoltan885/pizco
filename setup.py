@@ -18,6 +18,10 @@ setup(
     extras_require = {
         'pyzmq':  ['pyzmq'],
         },
+    install_requires = [
+        'pyzmq',
+        'tornado',
+        ],
     license='BSD',
     classifiers=[
       'Development Status :: 4 - Beta',

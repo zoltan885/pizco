@@ -25,6 +25,7 @@ if (zmq.zmq_version_info()[0] < 3):
 LOGGER = logging.getLogger(__name__)
 LOGGER.addHandler(logging.NullHandler())
 
+
 def main(args=None):
     import argparse
     parser = argparse.ArgumentParser('Starts an server')
@@ -78,26 +79,32 @@ def main(args=None):
     print('Server stopped')
 
 
-def launch(cwd, rep_endpoint, pub_endpoint, verbose=True, gui=False):
+def launch(cwd, rep_endpoint, pub_endpoint, verbose=True, gui=False, in_terminal=True):
     if cwd == '':
         cwd = '.'
-    launcher = os.environ.get('PZC_DEFAULT_LAUNCHER', None)
+    if in_terminal:
+        launcher = os.environ.get('PZC_DEFAULT_LAUNCHER', None)
 
-    if not launcher:
-        sw = sys.platform.startswith
-        if sw('linux'):
-            launcher = r"""xterm -e "{0[python]} {0[pizco]} {0[rep_endpoint]} {0[pub_endpoint]} """ \
-                       r"""-p {0[cwd]} {0[verbose]} {0[gui]}" """
-        elif sw('win32'):
-            launcher = r"""cmd.exe /k "{0[python]} {0[pizco]} {0[rep_endpoint]} {0[pub_endpoint]} """\
-                       r"""-p {0[cwd]} {0[verbose]} {0[gui]} """
-        elif sw('darwin'):
-            launcher = r"""osascript -e 'tell application "Terminal"' """\
-                       r""" -e 'do script "\"{0[python]}\" \"{0[pizco]}\" {0[rep_endpoint]} {0[pub_endpoint]} """ \
-                       r"""-p \"{0[cwd]}\" {0[verbose]} {0[gui]}"' """ \
-                       r""" -e 'end tell' """
-        else:
-            raise RuntimeError('Platform not support: {}'.format(sys.platform))
+        if not launcher:
+            sw = sys.platform.startswith
+            if sw('linux'):
+                launcher = r"""xterm -e "{0[python]} {0[pizco]} {0[rep_endpoint]} {0[pub_endpoint]} """ \
+                           r"""-p {0[cwd]} {0[verbose]} {0[gui]}" """
+            elif sw('win32'):
+                launcher = r"""cmd.exe /k "{0[python]} {0[pizco]} {0[rep_endpoint]} {0[pub_endpoint]} """\
+                           r"""-p {0[cwd]} {0[verbose]} {0[gui]} """
+            elif sw('darwin'):
+                launcher = r"""osascript -e 'tell application "Terminal"' """\
+                           r""" -e 'do script "\"{0[python]}\" \"{0[pizco]}\" """\
+                           r"""{0[rep_endpoint]} {0[pub_endpoint]} """ \
+                           r"""-p \"{0[cwd]}\" {0[verbose]} {0[gui]}"' """ \
+                           r""" -e 'end tell' """
+            else:
+                raise RuntimeError('Platform not support: {}'.format(sys.platform))
+    else:
+        launcher = r"""{0[python]} {0[pizco]} {0[rep_endpoint]} {0[pub_endpoint]} """ \
+                   r"""-p {0[cwd]} {0[verbose]} {0[gui]}"""
+
 
     o = dict(python=sys.executable, pizco=__file__,
              rep_endpoint=rep_endpoint, pub_endpoint=pub_endpoint,

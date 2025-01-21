@@ -16,7 +16,8 @@ import threading
 from collections import defaultdict
 
 import zmq
-from zmq.eventloop import zmqstream, ioloop
+from zmq.eventloop import zmqstream
+from tornado import ioloop
 
 from . import LOGGER
 from .protocol import Protocol
@@ -55,6 +56,8 @@ class AgentManager(object):
         try:
             while cls.threads[agent.loop].is_alive():
                 cls.threads[agent.loop].join(1)
+                if not agent._running:
+                    break
         except (KeyboardInterrupt, SystemExit):
             return
 
@@ -368,7 +371,7 @@ class Agent(object):
         except:
             LOGGER.debug('Invalid message {}'.format(message))
         else:
-            callback = self.notifications_callbacks[(sender, topic)]
+            callback = self.notifications_callbacks.get((sender, topic), None)
             if callback:
                 callback(sender, topic, content, msgid)
             else:

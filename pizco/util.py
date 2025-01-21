@@ -9,17 +9,120 @@
     :license: BSD, see LICENSE for more details.
 """
 
+import inspect
+
+
+class SignalError(Exception):
+    pass
+
+
+def specable(f):
+    try:
+        inspect.getfullargspec(f)
+        return True
+    except:
+        return False
+
+
+def getspec(f):
+    if not specable(f):
+        raise ValueError(
+            "getspec doesn't know how to get function spec from type {}".format(
+                type(f)))
+    spec = inspect.getfullargspec(f)
+    defaults = []
+    if hasattr(f, '__call__') and inspect.ismethod(f.__call__):
+        return getspec(f.__call__)
+    if spec.defaults is not None:
+        defaults = spec.defaults
+    if inspect.ismethod(f):
+        # remove self from args
+        args = spec.args[1:]
+    else:
+        args = spec.args
+    return inspect.FullArgSpec(
+        args, spec.varargs, spec.varkw, defaults, spec.kwonlyargs, spec.kwonlydefaults, spec.annotations)
+
+    # if hasattr(f, '__call__') and specable(f.__call__):
+    #     #spec = getspec(f.__call__)
+    #     spec = inspect.getfullargspec(f)
+    #     defaults = []
+    #     if spec.defaults is not None:
+    #         defaults = spec.defaults
+    #     args = spec.args[1:]  # remove reference to self
+    #     return inspect.FullArgSpec(args, spec.varargs, spec.varkw, defaults, spec.kwonlyargs, spec.kwonlydefaults, spec.annotations)
+    #     #return inspect.FullArgSpec(
+    #     #    args, spec.varargs, spec.varargs, spec.defaults)
+    # if specable(f):
+    #     spec = inspect.getfullargspec(f)
+    #     defaults = []
+    #     if spec.defaults is not None:
+    #         defaults = spec.defaults
+    #     return inspect.FullArgSpec(spec.args, spec.varargs, spec.varkw, defaults, spec.kwonlyargs, spec.kwonlydefaults, spec.annotations)
+    #     #return inspect.FullArgSpec(
+    #     #    spec.args, spec.varargs is not None,
+    #     #    spec.varargs is not None, defaults)
+    # # TODO handle partials
+    # raise ValueError(
+    #     "getspec doesn't know how to get function spec from type {}".format(
+    #         type(f)))
+
 
 class Signal(object):
     """PyQt like signal object
     """
-    def __init__(self):
-        #add dummy types for signals or hide a pyqtSignal behind to resync with qt main loop
+    def __init__(self, nargs=0, kwargs=None, varargs=False, varkwargs=False):
+        # add dummy types for signals or hide a pyqtSignal behind to resync
+        # with qt main loop
         self.slots = []
+        self._nargs = nargs
+        if kwargs is None:
+            self._kwargs = []
+        else:
+            self._kwargs = kwargs
+        self._varargs = varargs
+        self._varkwargs = varkwargs
+
+    def _verify_slot(self, slot):
+        # signal varags -> slot varargs
+        # signal args -> slot args (or varargs)
+        # signal kwargs -> slot kwargs
+        spec = getspec(slot)
+
+        if not spec.varargs:  # function expects args
+            if self._varargs:
+                raise SignalError(
+                    "Slot {} does not accept varargs".format(slot))
+            else:  # check nargs
+                maxargs = len(spec.args)
+                if maxargs < self._nargs:
+                    raise SignalError(
+                        "Slot {} does not accept enough args {}".format(
+                            slot, maxargs))
+                minargs = maxargs - len(spec.defaults)
+                if minargs > self._nargs:
+                    raise SignalError(
+                        "Slot {} expects too many args {}".format(
+                            slot, minargs))
+
+        if not spec.varkw:  # function only accepts specific kwargs
+            if self._varkwargs:
+                raise SignalError(
+                    "Slot {} does not accept varkwargs".format(slot))
+            else:  # signal only passes specific kwargs
+                kwargs = spec.args[::-1][:len(spec.defaults)]
+                for kw in self._kwargs:
+                    if kw not in kwargs:
+                        raise SignalError(
+                            "Slot {} does not accept keyword {}".format(
+                                slot, kw))
 
     def connect(self, slot):
-        #add dummy connection type maybe this the place to create the pyqtSignals to be able to resync with qt event loop
+        # add dummy connection type maybe this the place to create the
+        # pyqtSignals to be able to resync with qt event loop
         if slot not in self.slots:
+            # verify that this slot works
+            self._verify_slot(slot)
             self.slots.append(slot)
 
     def disconnect(self, slot=None):
@@ -28,10 +131,26 @@ class Signal(object):
         else:
             self.slots.remove(slot)
 
-    def emit(self, *args):
-        #thread safety in qt main loop maybe pyqtSignals should be called behind
+    def _verify_emit(self, args, kwargs):
+        if not self._varargs:  # check args
+            if len(args) != self._nargs:
+                raise SignalError(
+                    "emit called with invalid number of args {}".format(
+                        len(args)))
+        if not self._varkwargs:  # check kwargs
+            for k in kwargs:
+                if k not in self._kwargs:
+                    raise SignalError(
+                        "emit called with invalid kwarg {}".format(
+                            k))
+
+    def emit(self, *args, **kwargs):
+        # thread safety in qt main loop maybe pyqtSignals should be
+        # called behind
+        self._verify_emit(args, kwargs)
         for slot in self.slots:
-            slot(*args)
+            slot(*args, **kwargs)
+
 
 def bind(sock, endpoint='tcp://127.0.0.1:0'):
     """Bind socket to endpoint accepting a variety of endpoint formats.

@@ -22,7 +22,10 @@ from .util import Signal
 from .agent import Agent
 
 if sys.version_info < (3, 2):
-    import futures
+    try:
+        import futures
+    except ImportError:
+        from concurrent import futures
 else:
     from concurrent import futures
 
@@ -80,8 +83,11 @@ class RemoteAttribute(object):
     def disconnect(self, fun):
         self.signal_manager('disconnect', self.name, fun)
 
-    def emit(self, value, old_value, other):
-        self.signal_manager('emit', self.name, (value, old_value, other))
+    #def emit(self, value, old_value, other):
+    #    self.signal_manager('emit', self.name, (value, old_value, other))
+
+    def emit(self, *args, **kwargs):
+        self.signal_manager('emit', self.name, (args, kwargs))
 
 
 def PSMessage(action, options):
@@ -178,6 +184,7 @@ class Server(Agent):
             if isinstance(ret, futures.Future):
                 ret.add_done_callback(lambda fut: self.publish('__future__',
                                                                {'msgid': msgid,
+                                                                'sender': sender,
                                                                 'result': fut.result() if not fut.exception() else None,
                                                                 'exception': fut.exception()}))
                 return PSMessage('future_register', msgid)
@@ -189,9 +196,13 @@ class Server(Agent):
             tb = traceback.format_exception(exc_type, exc_value, exc_tb)[1:]
             return PSMessage('raise', (ex, tb))
 
-    def emit(self, topic, value, old_value, other):
-        LOGGER.debug('Emitting {}, {}, {}, {}'.format(topic, value, old_value, other))
-        self.publish(topic, (value, old_value, other))
+    #def emit(self, topic, value, old_value, other):
+    #    LOGGER.debug('Emitting {}, {}, {}, {}'.format(topic, value, old_value, other))
+    #    self.publish(topic, (value, old_value, other))
+
+    def emit(self, topic, *args, **kwargs):
+        LOGGER.debug('Emitting {}, {}, {}'.format(topic, args, kwargs))
+        self.publish(topic, (args, kwargs))
 
     def on_subscribe(self, topic, count):
         try:
@@ -201,9 +212,13 @@ class Server(Agent):
 
         if count == 1:
             LOGGER.debug('Connecting {} signal on server'.format(topic))
-            def fun(value, old_value=None, other=None):
+            #def fun(value, old_value=None, other=None):
+            #    LOGGER.debug('ready to emit')
+            #    self.emit(topic, value, old_value, other)
+
+            def fun(*args, **kwargs):
                 LOGGER.debug('ready to emit')
-                self.emit(topic, value, old_value, other)
+                self.emit(topic, *args, **kwargs)
             self.signal_calls[topic] = fun
             signal.connect(self.signal_calls[topic])
 
@@ -229,9 +244,9 @@ class Server(Agent):
     @classmethod
     def serve_in_process(cls, served_cls, args, kwargs,
                          rep_endpoint, pub_endpoint='tcp://127.0.0.1:0',
-                         verbose=False, gui=False):
+                         verbose=False, gui=False, in_terminal=True):
         cwd = os.path.dirname(inspect.getfile(served_cls))
-        launch(cwd, rep_endpoint, pub_endpoint, verbose, gui)
+        launch(cwd, rep_endpoint, pub_endpoint, verbose, gui, in_terminal)
         import time
         time.sleep(1)
         proxy = Proxy(rep_endpoint)
@@ -253,6 +268,9 @@ class Server(Agent):
                 callable(attr) or
                 (hasattr(attr, 'connect') and hasattr(attr, 'disconnect') and hasattr(attr, 'emit')) )
 
+    def is_signal(self, attr):
+        return (hasattr(attr, 'connect') and hasattr(attr, 'disconnect') and hasattr(attr, 'emit'))
+
     def force_as_object(self, attr):
         """Return True if the object must be returned as object even if it meets the conditions of a RemoteAttribute.
 
@@ -273,7 +291,25 @@ class Server(Agent):
                        if not name.startswith('_') and self.return_as_remote(value)])
         objects = set([name for name, value in inspect.getmembers(self.served_object)
                        if not name.startswith('_') and self.force_as_object(value)])
-        return remotes, objects
+        signals = set([name for name, value in inspect.getmembers(self.served_object)
+                       if not name.startswith('_') and self.is_signal(value)])
+        return remotes, objects, signals
+
+
+class SignalDict(defaultdict):
+    def __init__(self, request, *args, **kwargs):
+        defaultdict.__init__(self, Signal, *args, **kwargs)
+        self._request = request
+
+    def __missing__(self, key):
+        # TODO ZMQError cannot be completed in current state
+        args = []
+        for k in ['_nargs', '_kwargs', '_varargs', '_varkwargs']:
+            v = self._request('exec', {
+                'name': key[1], 'method': '__getattribute__', 'args': (k, )})
+            args.append(v)
+        LOGGER.debug("Creating signal for {} with args {}".format(key, args))
+        return Signal(*args)
 
 
 class ProxyAgent(Agent):
@@ -289,8 +325,11 @@ class ProxyAgent(Agent):
         ret = self.request(self.remote_rep_endpoint, 'info')
         self.remote_pub_endpoint = ret['pub_endpoint']
 
-        LOGGER.debug('Started Proxy pointing to REP: {} and PUB: {}'.format(self.remote_rep_endpoint, self.remote_pub_endpoint))
-        self._signals = defaultdict(Signal)
+        LOGGER.debug(
+            'Started Proxy pointing to REP: {} and PUB: {}'.format(
+                self.remote_rep_endpoint, self.remote_pub_endpoint))
+        #self._signals = defaultdict(Signal)
+        self._signals = SignalDict(self.request_server)
 
         #: Maps msgid to future object.
         self._futures = {}
@@ -308,7 +347,8 @@ class ProxyAgent(Agent):
         if force_as_object:
             options['force_as_object'] = True
 
-        content = self.request(self.remote_rep_endpoint, PSMessage(action, options))
+        content = self.request(
+            self.remote_rep_endpoint, PSMessage(action, options))
 
         try:
             ret_type, ret_action, ret_options = content
@@ -328,7 +368,15 @@ class ProxyAgent(Agent):
         elif ret_action == 'future_register':
             fut = futures.Future()
             fut.set_running_or_notify_cancel()
-            self._futures[ret_options] = fut
+            if ret_options in self._futures:
+                # for this future, the result was already received
+                if self._futures[ret_options]['exception']:
+                    fut.set_exception(self._futures[ret_options]['exception'])
+                else:
+                    fut.set_result(self._futures[ret_options]['result'])
+                del self._futures[ret_options]
+            else:
+                self._futures[ret_options] = fut
             return fut
         else:
             raise ValueError('Unknown {}'.format(ret_action))
@@ -349,15 +397,25 @@ class ProxyAgent(Agent):
             raise ValueError(action)
 
     def on_future_completed(self, sender, topic, content, msgid):
+        # make sure self was the sender
+        if content['sender'] != self.rep_endpoint:
+            # or else ignore this future result
+            return
+        if not content['msgid'] in self._futures:
+            # this future result belongs to a future that hasn't been
+            # received, cache it for now
+            self._futures[content['msgid']] = content
+            return
         fut = self._futures[content['msgid']]
         if content['exception']:
             fut.set_exception(content['exception'])
         else:
             fut.set_result(content['result'])
+        del self._futures[content['msgid']]
 
     def on_notification(self, sender, topic, content, msgid):
         try:
-            self._signals[(sender, topic)].emit(*content)
+            self._signals[(sender, topic)].emit(*content[0], **content[1])
         except KeyError:
             super(ProxyAgent, self).on_notification(
                 sender, topic, content, msgid)
@@ -387,8 +445,12 @@ class Proxy(object):
 
     def __init__(self, remote_endpoint):
         self._proxy_agent = ProxyAgent(remote_endpoint)
-        self._proxy_attr_as_remote, self._proxy_attr_as_object = self._proxy_agent.request_server('inspect', {})
-        
+        self._proxy_attr_as_remote, self._proxy_attr_as_object, self._proxy_signals = self._proxy_agent.request_server('inspect', {})
+        # TODO build signals here
+        for k in self._proxy_signals:
+            self._proxy_agent._signals[(remote_endpoint, k)] = \
+                self._proxy_agent._signals[(remote_endpoint, k)]
+
     def __getattr__(self, item):
         if item.startswith('_proxy_'):
             return super(Proxy, self).__getattr__(item)
